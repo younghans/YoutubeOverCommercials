@@ -28,6 +28,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         chrome.tabs.sendMessage(sender.tab.id, { action: "overlay_commercial_state" });
 
+    } else if (message.action === "session_active") {
+
+        chrome.action.setIcon({
+            tabId: sender.tab.id,
+            path: {
+                "16": "/icon16-on.png",
+                "32": "/icon32-on.png",
+                "48": "/icon48-on.png",
+                "128": "/icon128-on.png"
+            }
+        });
+
+    } else if (message.action === "session_ended") {
+
+        chrome.action.setIcon({
+            tabId: sender.tab.id,
+            path: {
+                "16": "/icon16.png",
+                "32": "/icon32.png",
+                "48": "/icon48.png",
+                "128": "/icon128.png"
+            }
+        });
+
     } else if (message.action === "open_spotify") {
 
         //open spotify in an inactive pinned tab

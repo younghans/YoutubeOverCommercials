@@ -395,6 +395,15 @@ document.getElementById("close-button").onclick = function () {
     window.close();
 }
 
+document.getElementById("stop-session-button").addEventListener('click', () => {
+    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+        if (tabs && tabs.length > 0) {
+            chrome.tabs.sendMessage(tabs[0].id, { action: "stop_session" });
+            window.close();
+        }
+    });
+});
+
 
 function setTextFieldsToSelectAll() {
     document.querySelectorAll("input[type='text']").forEach(function (input) {

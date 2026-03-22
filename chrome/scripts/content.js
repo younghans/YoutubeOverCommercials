@@ -57,6 +57,31 @@ var hasMaskCompleteMessageBeenDismissed = false;
 var consecutiveAdvancedLogoAnalysisCallFailures = 0;
 var isAdvancedLogoMonitorPaused = false;
 var isColorLogo = false;
+var relativeSelectedPixelLocation;
+var relativeAdvancedLogoSelectionLocation;
+var dynamicDebugBox;
+
+function updateDynamicDebugBox(topLeft, dimensions) {
+    if (!dynamicDebugBox) {
+        dynamicDebugBox = document.createElement("div");
+        dynamicDebugBox.style.position = "fixed";
+        dynamicDebugBox.style.border = "2px solid red";
+        dynamicDebugBox.style.zIndex = "2147483647"; // max z-index
+        dynamicDebugBox.style.pointerEvents = "none"; // allow clicking through
+        document.body.appendChild(dynamicDebugBox);
+    }
+    dynamicDebugBox.style.left = topLeft.x + "px";
+    dynamicDebugBox.style.top = topLeft.y + "px";
+    dynamicDebugBox.style.width = (dimensions.width || 2) + "px";
+    dynamicDebugBox.style.height = (dimensions.height || 2) + "px";
+}
+
+function removeDynamicDebugBox() {
+    if (dynamicDebugBox) {
+        dynamicDebugBox.remove();
+        dynamicDebugBox = null;
+    }
+}
 //variables for Firefox auto audio commercial detection mode:
 var stream;
 var audioContext;
@@ -119,9 +144,8 @@ var clapSensitivity;
 //function that is responsible for loading the video iframe over top of the main/background video
 function setOverlayVideo() {
 
-    //TODO: add check to make sure user is still in full screen and if not to break and resut isFirstRun
-    let insertLocation = document.fullscreenElement;
-    if (insertLocation.nodeName == 'HTML') {
+    let insertLocation = document.fullscreenElement || document.getElementsByTagName('body')[0];
+    if (insertLocation && insertLocation.nodeName == 'HTML') {
         insertLocation = document.getElementsByTagName('body')[0];
     }
 
@@ -344,10 +368,6 @@ function potentiallyIntrusiveSetup() {
         chrome.runtime.sendMessage({ action: "open_spotify" });
         window.addEventListener('beforeunload', closeSpotify);
     }
-
-    //TODO: should this be moved above opening spotify?
-    //Note: this happens in pixelSelection() in auto mode
-    document.addEventListener('fullscreenchange', fullscreenChanged);
 }
 
 
@@ -486,19 +506,12 @@ function startCommercialMode() {
 
     if ((commercialDetectionMode.indexOf('auto') >= 0 || commercialDetectionMode === 'manual-clap') && isAutoModeFirstCommercial) {
 
-        //check again if in full screen in case user exited
-        if (document.fullscreenElement) {
+        isCommercialState = true;
 
-            isCommercialState = true;
-
-            isAutoModeFirstCommercial = false;
-            //setting cooldown time so video has a chance to play for the first time, also needed for overlay video audio to shift to other tab in auto-audio mode
-            cooldownCountRemaining = 8;
-            initialRun();
-
-        } else {
-            setNotFullscreenAlerts();
-        }
+        isAutoModeFirstCommercial = false;
+        //setting cooldown time so video has a chance to play for the first time, also needed for overlay video audio to shift to other tab in auto-audio mode
+        cooldownCountRemaining = 8;
+        initialRun();
 
     } else {
 
@@ -541,6 +554,8 @@ chrome.runtime.onMessage.addListener(function (message) {
         //special actions for the very first time this is initiated on a page
         if (isFirstRun && !isAutoModeInitiated) {
 
+            chrome.runtime.sendMessage({ action: "session_active" });
+
             if (!hasFontBeenInjected) {
                 injectFontOntoPage();
             }
@@ -551,11 +566,8 @@ chrome.runtime.onMessage.addListener(function (message) {
 
                 overlayHostName = result.overlayHostName ?? 'www.youtube.com';
 
-                //extension can only be initiated for the first time if user is in full screen mode, this is needed to find out where to place the overlay video
-                if (document.fullscreenElement) {
-
-                    //TODO: look into why this would ever return iframe and why I'm stopping because of it - I think it is because if the iframe is fullscreened then that means something inside of it would also count as fullscreened, see espn.com/watch for example
-                    if (document.fullscreenElement.nodeName != 'IFRAME') {
+                let fullscreenEl = document.fullscreenElement;
+                if (!fullscreenEl || fullscreenEl.nodeName != 'IFRAME') {
 
                         //grab all user set values
                         chrome.storage.sync.get([
@@ -677,8 +689,6 @@ chrome.runtime.onMessage.addListener(function (message) {
                                     windowDimensions = { x: windowWidth, y: windowHeight };
                                     startViewingTab(windowDimensions);
 
-                                    document.addEventListener('fullscreenchange', abortPixelSelection);
-
                                     //give a split sec for recording to start before asking user to pick a pixel
                                     setTimeout(() => {
                                         //TODO: should what I'm doing for amazon be done everywhere?
@@ -727,15 +737,7 @@ chrome.runtime.onMessage.addListener(function (message) {
 
                         });
 
-                    } //else do nothing for when nodeName is IFRAME
-
-                } else if (overlayHostName == 'www.youtube.com') { //TODO: find a better way to not show this warning on overlay video when using non-yt videos and maybe not even let it get to this point. 
-                    //TODO: Also displays some sort of alert / warning when user tries to use over top of actual www.youtube.com
-                    //since user was not in full screen, instruct them that they need to be
-
-                    setNotFullscreenAlerts();
-
-                }
+                } //else do nothing for when nodeName is IFRAME
 
             });
 
@@ -864,12 +866,12 @@ function setBlockersAndPixelSelectionInstructions() {
     let insertLocation = document.getElementsByTagName('body')[0];
     insertLocation.insertBefore(clickBlocker1, null);
 
-    let insertLocationFullscreenElm = document.fullscreenElement;
+    let insertLocationFullscreenElm = document.fullscreenElement || document.getElementsByTagName('body')[0];
 
     //TODO: figure out better way to suppress UI from showing if there is a mousemove event on the top level full screen element like for vimeo
     //insertLocationFullscreenElm.classList.add("ytoc-click-blocker-addition");
 
-    if (insertLocationFullscreenElm.nodeName == 'HTML') {
+    if (insertLocationFullscreenElm && insertLocationFullscreenElm.nodeName == 'HTML') {
         insertLocationFullscreenElm = document.getElementsByTagName('body')[0];
     }
 
@@ -981,7 +983,6 @@ function removeBlockersListenersAndPixelSelectionInstructions() {
     clickBlocker1.style.setProperty("cursor", "none", "important");
     clickBlocker2.style.setProperty("cursor", "none", "important");
 
-    document.removeEventListener('fullscreenchange', abortPixelSelection);
     if (commercialDetectionMode === 'auto-pixel-advanced-logo') {
         document.removeEventListener('mousedown', fullLogoSelectionInitiation);
     } else {
@@ -1035,11 +1036,17 @@ function pixelSelection(event) {
             selectedPixel = { x: (event.clientX - 1), y: (event.clientY - 2) };
         }
 
+        if (mainVideoCollection && mainVideoCollection[0]) {
+            const rect = mainVideoCollection[0].getBoundingClientRect();
+            relativeSelectedPixelLocation = {
+                percentX: (selectedPixel.x - rect.left) / rect.width,
+                percentY: (selectedPixel.y - rect.top) / rect.height
+            };
+        }
+
         removeBlockersListenersAndPixelSelectionInstructions();
 
         indicateSelectedPixel(selectedPixel);
-
-        document.addEventListener('fullscreenchange', fullscreenChanged);
 
         let selectedPixelGridLocation = getSelectedPixelGridLocation(selectedPixel);
 
@@ -1254,10 +1261,22 @@ function pixelColorMatchMonitor(originalPixelColor, selectedPixel) {
 function getPixelColor(coordinates) {
 
     return new Promise(function (resolve, reject) {
+        
+        let dynamicCoordinates = coordinates;
+        
+        if (relativeSelectedPixelLocation && mainVideoCollection && mainVideoCollection[0]) {
+            const rect = mainVideoCollection[0].getBoundingClientRect();
+            dynamicCoordinates = {
+                x: rect.left + (relativeSelectedPixelLocation.percentX * rect.width),
+                y: rect.top + (relativeSelectedPixelLocation.percentY * rect.height)
+            };
+        }
+        
+        updateDynamicDebugBox(dynamicCoordinates, {width: 2, height: 2});
 
         if (isFirefox) {
 
-            let rect = { x: coordinates.x, y: coordinates.y, width: 1, height: 1 };
+            let rect = { x: dynamicCoordinates.x, y: dynamicCoordinates.y, width: 1, height: 1 };
 
             chrome.runtime.sendMessage({ action: "firefox-capture-screenshot", rect: rect }, function (response) {
 
@@ -1287,7 +1306,7 @@ function getPixelColor(coordinates) {
             chrome.runtime.sendMessage({
                 target: "offscreen",
                 action: "capture-screenshot",
-                coordinates: coordinates
+                coordinates: dynamicCoordinates
             }, function (response) {
 
                 //console.log(response.myCoordinates); //debug-high
@@ -1316,9 +1335,8 @@ function fullLogoSelectionInitiation(event) {
         advancedLogoSelectionBox.style.left = `${startX}px`;
         advancedLogoSelectionBox.style.top = `${startY}px`;
 
-        //TODO: add check to make sure user is still in full screen and if not to break and resut isFirstRun
-        let insertLocation = document.fullscreenElement;
-        if (insertLocation.nodeName == 'HTML') {
+        let insertLocation = document.fullscreenElement || document.getElementsByTagName('body')[0];
+        if (insertLocation && insertLocation.nodeName == 'HTML') {
             insertLocation = document.getElementsByTagName('body')[0];
         }
         insertLocation.insertBefore(advancedLogoSelectionBox, null);
@@ -1376,9 +1394,17 @@ function fullLogoSelectionCompletion(event, startX, startY) {
     advancedLogoSelectionBottomRightLocation = { x: bottomRightX, y: bottomRightY };
     advancedLogoSelectionDimensions = { width, height };
 
+    if (mainVideoCollection && mainVideoCollection[0]) {
+        const rect = mainVideoCollection[0].getBoundingClientRect();
+        relativeAdvancedLogoSelectionLocation = {
+            percentX: (topLeftX - rect.left) / rect.width,
+            percentY: (topLeftY - rect.top) / rect.height,
+            percentWidth: width / rect.width,
+            percentHeight: height / rect.height
+        };
+    }
+
     removeBlockersListenersAndPixelSelectionInstructions();
-    //note: don't need to remove mouseup listener because it is set to run only once
-    document.addEventListener('fullscreenchange', fullscreenChanged);
 
     selectedPixel = { ...advancedLogoSelectionTopLeftLocation };
     let selectedPixelGridLocation = getSelectedPixelGridLocation(selectedPixel);
@@ -1409,13 +1435,6 @@ function fullLogoSelectionCompletion(event, startX, startY) {
 
 function buildLogoMask(advancedLogoSelectionTopLeftLocation, advancedLogoSelectionDimensions) {
     const startTime = Date.now();
-
-    if (!document.fullscreenElement) {
-        //TODO: somehow work to not trigger the othe exit fullscreen trigger during mask building
-        removeElementsByClass('ytoc-main-video-message-alert');
-        shutdownAdvancedLogoAnalysis('Logo analysis canceled prior to completion due to exiting fullscreen. Please resume full screen and try again. This message will soon disappear.');
-        return;
-    }
 
     let buildMaskRequestType;
     if (advancedLogoMaskCollectionSamples === 0) {
@@ -1532,6 +1551,12 @@ function prepForAdvancedLogoMonitor(logoAnalysisResponse, delay, advancedLogoSel
 
 //checks the color of the user set pixel and compares it to the original color in intervals and initiates commercial or non-commercial mode accordingly
 function advancedLogoMonitor(advancedLogoSelectionTopLeftLocation, advancedLogoSelectionDimensions) {
+    if (!isAutoModeInitiated) {
+        if (typeof removeDynamicDebugBox === 'function') {
+            removeDynamicDebugBox();
+        }
+        return;
+    }
     if (!isAdvancedLogoMonitorPaused) {
         const startTime = Date.now();
 
@@ -1710,8 +1735,32 @@ function advancedLogoMonitor(advancedLogoSelectionTopLeftLocation, advancedLogoS
 //will build edge mask of logo and then will return how much that egde mask matches the current edges amoung other things
 function getAdvancedLogoAnalysis(coordinates, dimensions, request) {
     return new Promise(function (resolve, reject) {
+        
+        let dynamicCoordinates = coordinates;
+        let dynamicDimensions = dimensions;
+
+        if (relativeAdvancedLogoSelectionLocation && mainVideoCollection && mainVideoCollection[0]) {
+            const rect = mainVideoCollection[0].getBoundingClientRect();
+            
+            // If the video is completely off-screen, reject early to avoid taking black screenshots
+            if ((rect.bottom < 0 || rect.top > window.innerHeight) || (rect.right < 0 || rect.left > window.innerWidth)) {
+                return resolve(false);
+            }
+
+            dynamicCoordinates = {
+                x: rect.left + (relativeAdvancedLogoSelectionLocation.percentX * rect.width),
+                y: rect.top + (relativeAdvancedLogoSelectionLocation.percentY * rect.height)
+            };
+            dynamicDimensions = {
+                width: relativeAdvancedLogoSelectionLocation.percentWidth * rect.width,
+                height: relativeAdvancedLogoSelectionLocation.percentHeight * rect.height
+            };
+        }
+
+        updateDynamicDebugBox(dynamicCoordinates, dynamicDimensions);
+
         if (isFirefox) {
-            let rect = { x: coordinates.x, y: coordinates.y, width: dimensions.width, height: dimensions.height };
+            let rect = { x: dynamicCoordinates.x, y: dynamicCoordinates.y, width: dynamicDimensions.width, height: dynamicDimensions.height };
 
             chrome.runtime.sendMessage({
                 action: "firefox-advanced-logo-analysis",
@@ -1730,8 +1779,8 @@ function getAdvancedLogoAnalysis(coordinates, dimensions, request) {
                 target: "offscreen",
                 action: "capture-logo-advanced",
                 request: request,
-                coordinates: coordinates,
-                dimensions: dimensions,
+                coordinates: dynamicCoordinates,
+                dimensions: dynamicDimensions,
                 isCommercialState: isCommercialState
             }, function (response) {
                 if (response.wasSuccessfulCall) {
@@ -1754,7 +1803,8 @@ function shutdownAdvancedLogoAnalysis(message) {
 
     pauseAutoMode(false);
 
-    document.removeEventListener('fullscreenchange', fullscreenChanged);
+    removeDynamicDebugBox();
+
     if (logoBox) {
         logoBox.remove(); //TODO: does this even need removed if I'm removing the container it is in right after this?
     }
@@ -1774,9 +1824,8 @@ function shutdownAdvancedLogoAnalysis(message) {
 
 
 function setAdvancedLogoDetectionImagePreviews(advancedLogoSelectionTopLeftLocation, advancedLogoSelectionDimensions, selectedPixelGridLocation) {
-    //TODO: add check to make sure user is still in fullscreen mode
-    let insertLocation = document.fullscreenElement;
-    if (insertLocation.nodeName == 'HTML') {
+    let insertLocation = document.fullscreenElement || document.getElementsByTagName('body')[0];
+    if (insertLocation && insertLocation.nodeName == 'HTML') {
         insertLocation = document.getElementsByTagName('body')[0];
     }
 
@@ -1837,8 +1886,6 @@ function prepForAudioMonitor() {
         if (!isDebugMode) { audioLevelIndicatorContainer.style.display = 'none'; }
     }, 2000);
 
-    document.addEventListener('fullscreenchange', fullscreenChanged);
-
     if (overlayVideoType == 'spotify') {
         //if user has extension set to spotify, open spotify now and prompt the user to choose music to play
         setTimeout(() => {
@@ -1864,9 +1911,8 @@ function prepForAudioMonitor() {
 
 function setAudioLevelIndicator() {
 
-    //TODO: add check to make sure user is still in fullscreen mode
-    let insertLocation = document.fullscreenElement;
-    if (insertLocation.nodeName == 'HTML') {
+    let insertLocation = document.fullscreenElement || document.getElementsByTagName('body')[0];
+    if (insertLocation && insertLocation.nodeName == 'HTML') {
         insertLocation = document.getElementsByTagName('body')[0];
     }
 
@@ -2074,9 +2120,8 @@ function setAudioLevelBar(level) {
 //sets element to show user color differences next to selected pixel when commercial is detected
 function setCommercialDetectedIndicator(selectedPixel, selectedPixelGridLocation) {
 
-    //TODO: add check to make sure user is still in fullscreen mode
-    let insertLocation = document.fullscreenElement;
-    if (insertLocation.nodeName == 'HTML') {
+    let insertLocation = document.fullscreenElement || document.getElementsByTagName('body')[0];
+    if (insertLocation && insertLocation.nodeName == 'HTML') {
         insertLocation = document.getElementsByTagName('body')[0];
     }
 
@@ -2431,8 +2476,8 @@ function abortPixelSelection() {
 function indicateSelectedPixel(selectedPixel) {
 
     //TODO: add check to make sure user is still in full screen and if not to break and resut isFirstRun
-    let insertLocation = document.fullscreenElement;
-    if (insertLocation.nodeName == 'HTML') {
+    let insertLocation = document.fullscreenElement || document.getElementsByTagName('body')[0];
+    if (insertLocation && insertLocation.nodeName == 'HTML') {
         insertLocation = document.getElementsByTagName('body')[0];
     }
 
@@ -2970,9 +3015,8 @@ function resetClapsIndicator() {
 
 
 function initiateClapIndicator() {
-    //TODO: add check to make sure user is still in fullscreen mode
-    let insertLocation = document.fullscreenElement;
-    if (insertLocation.nodeName == 'HTML') {
+    let insertLocation = document.fullscreenElement || document.getElementsByTagName('body')[0];
+    if (insertLocation && insertLocation.nodeName == 'HTML') {
         insertLocation = document.getElementsByTagName('body')[0];
     }
 
@@ -3070,3 +3114,40 @@ function createCanvas(id, width, height, parent) {
     parent.appendChild(canvas);
     return canvas.getContext('2d'); // return the context directly
 }
+
+chrome.runtime.onMessage.addListener(function (message) {
+    if (message.action === "stop_session") {
+        if (true) {
+            isFirstRun = true;
+            isAutoModeInitiated = false;
+            
+            if (monitorIntervalID) {
+                clearInterval(monitorIntervalID);
+            }
+            
+            if (isCommercialState) {
+                endCommercialMode();
+            }
+            
+            if (typeof overlayVideo !== 'undefined' && overlayVideo) {
+                removeOverlayVideo();
+            }
+            
+            if (typeof removeNotFullscreenAlerts === 'function') {
+                removeNotFullscreenAlerts();
+            }
+            
+            if (commercialDetectionMode && commercialDetectionMode.indexOf('auto-pixel') >= 0 && !selectedPixel) {
+                if (typeof abortPixelSelection === 'function') {
+                    abortPixelSelection();
+                }
+            }
+            
+            if (typeof removeDynamicDebugBox === 'function') {
+            removeDynamicDebugBox();
+        }
+        
+        chrome.runtime.sendMessage({ action: "session_ended" });
+        }
+    }
+});
